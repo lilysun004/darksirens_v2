@@ -1,0 +1,6 @@
+env/
+lalsuite-extra-1.3.0
+*.fits
+*.xml
+*.parquet
+*.tar.gz
