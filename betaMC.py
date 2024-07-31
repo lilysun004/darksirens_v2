@@ -86,8 +86,7 @@ def draw_from_mass_distr_m2(m1):
     return np.random.choice(m_values,p=p_m2_values)
 
 #%% LOADING EUCLID
-euclid_df = pd.read_parquet('subeuclid.parquet')
-euclid_catalog = euclid_df[(euclid_df['ztrue']>0) & (euclid_df['ztrue']<1)]
+euclid_df = pd.read_parquet('subeuclid_rotated.parquet')
 
 #%% PREPARING DATA AS ARRAYS
 H0_values = np.linspace(20,140,25)
@@ -175,60 +174,3 @@ plt.show()
 
 #%% BETA PLOT AGAINST H0
 plt.plot(H0_values,betas)
-
-#%% GENERATING EVENT
-
-## I referred to the DarkSirenStat package from
-## https://github.com/CosmoStatGW/DarkSirensStat 
-## Namely the SNRtools.py and betaMC.py files
-
-## Not 100% sure how sigma is the SNR but that's what they did
-## I tried reading the PSD file from the O2 run https://dcc.ligo.org/LIGO-G1801952/public
-## but it's a pain to interpolate so for now I'm using a pycbc built in 
-
-## Is this how they get the SNR
-
-# mass1 = 30 #source frame masses
-# mass2 = 20
-# z = 0.05
-# distance = dL(z,70)
-# f_low = 20.0
-# duration = 5.0
-# sample_rate = 4096
-# inclination = 2*np.pi
-# approximant = 'IMRPhenomXAS'
-
-# hp, _ = get_td_waveform(approximant=approximant,
-#                         mass1=mass1,
-#                         mass2=mass2,
-#                         delta_t=1.0/sample_rate,
-#                         f_lower=f_low,
-#                         inclination=inclination,
-#                         distance=distance)  # Convert Mpc to parsecs
-
-# psd = analytical.aLIGOEarlyLowSensitivityP1200087(len(hp), hp.delta_f, f_low)
-# snr = sigma(hp, psd=psd, low_frequency_cutoff=f_low)
-# print(snr)
-
-# def p0_unnorm(M1,M2):
-#     num = (M2/M1)**bq
-#     den = M1*(1-(mmin/M1)**(1+bq))
-#     if M1 <= mmin or M1 >= mmax or M2 <= mmin or M2 >= mmax:
-#         return 0
-#     if M1 < mbreak:
-#         return num/den * (M1/mbreak)**-y1
-#     if M1 > mbreak:
-#         return num/den * (M1/mbreak)**-y2
-
-# m1_values = np.linspace(mmin, mmax, n_mass)
-# m2_values = np.linspace(mmin, mmax, n_mass)
-# m1_grid, m2_grid = np.meshgrid(m1_values, m2_values)
-# p0_values = np.empty((n_mass,n_mass))
-# for i in range(n_mass):
-#     for j in range(n_mass):
-#         p0_values[i,j] = p0_unnorm(m1_values[i],m2_values[j])
-# p0_values = p0_values / np.sum(p0_values)
-
-# m1_flat = m1_grid.flatten()
-# m2_flat = m2_grid.flatten()
-# p0_flat = p0_values.flatten()

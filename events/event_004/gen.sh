@@ -1,26 +1,23 @@
 lalapps_inspinj \
 -o inj.xml \
---m-distr fixMasses --fixed-mass1 4.88940940940941 --fixed-mass2 18.16836836836837 \
+--m-distr fixMasses --fixed-mass1 32.79203203203203 --fixed-mass2 48.76040040040041 \
 --t-distr uniform --time-step 7200 \
 --gps-start-time 1000000000 \
 --gps-end-time 1000007200 \
 --d-distr volume \
---min-distance 718.0849382397747e3 --max-distance 718.1049382397747e3 \
---l-distr fixed --longitude 31.76991081237793 --latitude 6.713024616241455 --i-distr uniform \
+--min-distance 1012.6435677996647e3 --max-distance 1012.6635677996646e3 \
+--l-distr fixed --longitude 85.9513413267256 --latitude -11.42077318612998 --i-distr uniform \
 --f-lower 20 --disable-spin \
 --waveform SEOBNRv4_ROM
 
 bayestar-sample-model-psd \
 -o psd.xml \
---E1=EinsteinTelescopeP1600143 \
---E2=EinsteinTelescopeP1600143 \
---E3=EinsteinTelescopeP1600143 \
---X1=CosmicExplorerP1600143
+--H1=aLIGOZeroDetHighPower --L1=aLIGOZeroDetHighPower --I1=aLIGOZeroDetHighPower --V1=AdvVirgo --K1=KAGRA
 
 bayestar-realize-coincs \
 -o coinc.xml \
 inj.xml --reference-psd psd.xml \
---detector E1 E2 E3 X1 \
+--detector H1 L1 I1 V1 K1 \
 --measurement-error gaussian-noise \
 --snr-threshold 4.0 \
 --net-snr-threshold 12.0 \
