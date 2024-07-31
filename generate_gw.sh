@@ -2,22 +2,21 @@ lalapps_inspinj \
 `# Write output to inj.xml.` \
 -o inj.xml \
 `# Mass distribution.` \
-`# In this example, the masses are pinned to 1.4 and 1.4 Msun.` \
 --m-distr fixMasses --fixed-mass1 30 --fixed-mass2 30 \
 `# Coalescence time distribution: adjust time step, start, and stop` \
 `# time to control the number of injections.` \
 --t-distr uniform --time-step 7200 \
 --gps-start-time 1000000000 \
---gps-end-time 1000086400 \
+--gps-end-time 1000072000 \
 `# Distance distribution: uniform in Euclidean volume.` \
 `# WARNING: distances are in kpc.` \
 --d-distr volume \
---min-distance 1 --max-distance 600e3 \
+--min-distance 270e3 --max-distance 280e3 \
 `# Sky position and inclination distribution: isotropic.` \
---l-distr random --i-distr uniform \
+--l-distr fixed --longitude -87.594213 --latitude -42.417559 --i-distr uniform \
 `# Write a table of CBC injections to inj.xml.` \
 --f-lower 30 --disable-spin \
---waveform TaylorF2threePointFivePN
+--waveform IMRPhenomXAS
 
 bayestar-sample-model-psd \
 `# Write output to psd.xml.` \
@@ -27,11 +26,7 @@ bayestar-sample-model-psd \
 --L1=aLIGOZeroDetHighPower \
 --I1=aLIGOZeroDetHighPower \
 --V1=AdvVirgo \
---K1=KAGRA \
-`# Optional: apply scale factor to selected PSDs to increase or` \
-`# decrease their sensitivity. The PSD is multiplied by a factor of one ` \
-`# over scale squared; the horizon distance is multiplied by the scale.` \
---I1-scale=0.75
+--K1=KAGRA
 
 bayestar-realize-coincs \
 `# Write output to coinc.xml.` \
@@ -51,3 +46,5 @@ inj.xml --reference-psd psd.xml \
 `# Optionally, save triggers that were below the single-detector` \
 `# threshold.` \
 --keep-subthreshold
+
+bayestar-localize-coincs coinc.xml

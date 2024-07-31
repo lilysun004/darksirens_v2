@@ -19,7 +19,9 @@ a2 = mbreak ** (y2-y1)
 m_values = np.linspace(mmin,mmax,1000)
 
 snr_threshold = 12
-approximant = 'IMRPhenomXAS'
+snr_indiv_threshold = 4
+min_triggers = 2
+approximant = 'SEOBNRv4_ROM'
 f_low = 20.0
 delta_f = 1/40
 duration = 4.0
@@ -56,12 +58,15 @@ def normalize(x,y):
         return np.zeros(len(y)) 
     return 1/C*y
 
+def min_triggers_reached(snr_list):
+    count = sum(1 for snr in snr_list if snr > snr_indiv_threshold)
+    return count >= min_triggers
 
 #%% MASS DRAWING
 def p1(m1):
-    if m1 >= mmin and m1 < mbreak:
+    if m1 > mmin and m1 < mbreak:
         return m1**(-y1)
-    if m1 >= mbreak and m1 <= mmax:
+    if m1 >= mbreak and m1 < mmax:
         return a2*m1**(-y2)
     else:
         return 0
@@ -72,33 +77,22 @@ p_m1_values = p_m1_values / np.sum(p_m1_values)
 def draw_from_mass_distr_m1():
     return np.random.choice(m_values,p=p_m1_values)
 
-# def p2(m1,m2):
-#     return (1+bq)/m1 * (m2/m1)**bq / (1 - (mmin/m1) ** (1+bq))
-
-# def draw_from_mass_distr_m2(m1):
-#     p_m2_values = np.array([p2(m1,m2) for m2 in m_values])
-#     p_m2_values = p_m2_values/np.sum(p_m2_values)
-#     return np.random.choice(m_values,p=p_m2_values)
+def p2(m1, m2):
+    return (1+bq)/m1 * (m2/m1)**bq / (1 - (mmin/m1) ** (1+bq))
 
 def draw_from_mass_distr_m2(m1):
-    return np.random.uniform(mmin,m1) #bq=0 case
+    p_m2_values = np.array([p2(m1,m2) for m2 in m_values])
+    p_m2_values = p_m2_values/np.sum(p_m2_values)
+    return np.random.choice(m_values,p=p_m2_values)
 
-#%% LOADING EUCLID ENTIRE
-# euclid_df = pd.read_parquet('euclid.parquet')
-# column_names = {'ra_gal':'RA','dec_gal':'Dec','true_redshift_gal':'truez','observed_redshift_gal':'obsz'}
-# euclid_df.rename(columns=column_names, inplace=True)
-
-# subeuclid_df = euclid_df.sample(frac=0.001, random_state=1)
-# subeuclid_df.to_parquet('subeuclid_0.001.parquet',index=False)
-
-#%% LOADING SUBEUCLID
-subeuclid_df = pd.read_parquet('subeuclid_small.parquet')
-subeuclid_catalog = subeuclid_df[(subeuclid_df['truez']>0) & (subeuclid_df['truez']<1)]
+#%% LOADING EUCLID
+euclid_df = pd.read_parquet('subeuclid.parquet')
+euclid_catalog = euclid_df[(euclid_df['ztrue']>0) & (euclid_df['ztrue']<1)]
 
 #%% PREPARING DATA AS ARRAYS
 H0_values = np.linspace(20,140,25)
-truez = np.array(subeuclid_catalog['truez'])
-zmeans = np.array(subeuclid_catalog['obsz'])
+truez = np.array(euclid_catalog['ztrue'])
+zmeans = np.array(euclid_catalog['zmean'])
 zsigmas = 0.05 * (1+zmeans) #model for photometric z errors
 z_values = np.linspace(0.01,1,50)
 
@@ -138,10 +132,14 @@ def compute_PGW(z,H0,ndraws):
                             f_lower=f_low,
                             inclination=inc,
                             distance=distance)
-        # psd = read.from_txt('o2sd.txt',len(hp),delta_f=delta_f,low_freq_cutoff=f_low)
-        psd = analytical.aLIGODesignSensitivityT1800044(len(hp), hp.delta_f, f_low)
-        snr = sigma(hp, psd=psd, low_frequency_cutoff=f_low)
-        if snr > snr_threshold:
+        psd_H1 = analytical.aLIGOZeroDetHighPower(len(hp), hp.delta_f, f_low)
+        psd_L1 = analytical.aLIGOZeroDetHighPower(len(hp), hp.delta_f, f_low)
+        psd_V1 = analytical.Virgo(len(hp), hp.delta_f, f_low)
+        snr_H1 = sigma(hp, psd=psd_H1, low_frequency_cutoff=f_low)
+        snr_L1 = sigma(hp, psd=psd_L1, low_frequency_cutoff=f_low)
+        snr_V1 = sigma(hp, psd=psd_V1, low_frequency_cutoff=f_low)
+        combined_snr = np.sqrt(snr_H1**2 + snr_L1**2 + snr_V1**2)
+        if min_triggers_reached([snr_H1,snr_L1,snr_V1]) and combined_snr >= snr_threshold:
             detected += 1
     PGW = detected / ndraws
     return PGW
@@ -151,7 +149,7 @@ compute_PGW_vectorized = np.vectorize(compute_PGW)
 #%%
 PGW_for_each_H0 = {}
 betas = []
-ndraws = 500
+ndraws = 100
 for H0 in H0_values:
     PGW_values = []
     for z in z_values:
@@ -167,7 +165,7 @@ for H0 in H0_values:
     PGW_for_each_H0[H0] = PGW_values
     betas.append(beta)
     print(H0,' done')
-np.save('betas/betas_0729.npy',betas)
+np.save('betas/betas_0731.npy',betas)
 
 #%% P_GW PLOTS AGAINST Z, FOR DIFFERENT H0
 for H0 in H0_values:

@@ -27,7 +27,9 @@ a2 = mbreak ** (y2-y1)
 m_values = np.linspace(mmin,mmax,1000)
 
 snr_threshold = 12
-approximant = 'IMRPhenomXAS'
+snr_indiv_threshold = 4
+min_triggers = 2
+approximant = 'SEOBNRv4_ROM'
 f_low = 20.0
 delta_f = 1/40
 duration = 4.0
@@ -88,6 +90,10 @@ def confidence_interval(x,y,ci): # assumes x is equally spaced array!
     interval_x = x[mostprob_indices]
     return min(interval_x), max(interval_x)
 
+def min_triggers_reached(snr_list):
+    count = sum(1 for snr in snr_list if snr > snr_indiv_threshold)
+    return count >= min_triggers
+
 #%% IMPORTANT FUNCTIONS
 def choose_host_galaxy(euclid, possible_host_indexs):
     host_index = np.random.choice(possible_host_indexs)
@@ -103,14 +109,20 @@ def p1(m1):
         return a2*m1**(-y2)
     else:
         return 0
+
 p_m1_values = np.array([p1(m1) for m1 in m_values])
 p_m1_values = p_m1_values / np.sum(p_m1_values)
 
 def draw_from_mass_distr_m1():
     return np.random.choice(m_values,p=p_m1_values)
 
+def p2(m1, m2):
+    return (1+bq)/m1 * (m2/m1)**bq / (1 - (mmin/m1) ** (1+bq))
+
 def draw_from_mass_distr_m2(m1):
-    return np.random.uniform(mmin,m1) #bq=0 case
+    p_m2_values = np.array([p2(m1,m2) for m2 in m_values])
+    p_m2_values = p_m2_values/np.sum(p_m2_values)
+    return np.random.choice(m_values,p=p_m2_values)
 
 def check_event_detected(truera, truedec, truez, truedL):
     m1 = draw_from_mass_distr_m1()
@@ -123,9 +135,14 @@ def check_event_detected(truera, truedec, truez, truedL):
                             f_lower=f_low,
                             inclination=inc,
                             distance=truedL)
-    psd = analytical.aLIGODesignSensitivityT1800044(len(hp), hp.delta_f, f_low)
-    snr = sigma(hp, psd=psd, low_frequency_cutoff=f_low)
-    if snr >= snr_threshold:
+    psd_H1 = analytical.aLIGOZeroDetHighPower(len(hp), hp.delta_f, f_low)
+    psd_L1 = analytical.aLIGOZeroDetHighPower(len(hp), hp.delta_f, f_low)
+    psd_V1 = analytical.Virgo(len(hp), hp.delta_f, f_low)
+    snr_H1 = sigma(hp, psd=psd_H1, low_frequency_cutoff=f_low)
+    snr_L1 = sigma(hp, psd=psd_L1, low_frequency_cutoff=f_low)
+    snr_V1 = sigma(hp, psd=psd_V1, low_frequency_cutoff=f_low)
+    combined_snr = np.sqrt(snr_H1**2 + snr_L1**2 + snr_V1**2)
+    if min_triggers_reached([snr_H1,snr_L1,snr_V1]) and combined_snr >= snr_threshold:
         return True
     else:
         return False
@@ -191,13 +208,6 @@ def find_catalog_zlimits(mostprob_df):
     z_upper_bound = z_finder(dL_upper_bound,H0_prior_max)
     return z_lower_bound, z_upper_bound
 
-    # mostprob_distmu = mostprob_df['DistMu']
-    # mostprob_distsigma = mostprob_df['DistSigma']
-    # dL_lower_bound, dL_upper_bound = min(mostprob_distmu), max(mostprob_distmu)
-    # z_lower_bound = z_finder(dL_lower_bound,H0_prior_min)
-    # z_upper_bound = z_finder(dL_upper_bound,H0_prior_max)
-    # return z_lower_bound, z_upper_bound
-
 def clean_euclid(filename, gw_nside=1024): # do only once
     euclid_df = pd.read_parquet(filename)
     column_names = {'truez':'ztrue','obsz':'zmean'}
@@ -251,7 +261,7 @@ def calculate_posterior_nobeta(H0_values, p_reds, mostprob_df):
     return np.array(posterior)
 
 #%% GALAXY CATALOG PROCESSING
-euclid = clean_euclid('subeuclid_small.parquet')
+euclid = clean_euclid('subeuclid.parquet')
 possible_host_indexs = euclid.index.to_numpy()
 
 #%% P_BG 
@@ -270,39 +280,39 @@ plt.legend()
 plt.title("Betas against H0")
 
 #%% BETAS CALCULATION ERF METHOD
-from math import erf
-betas = []
-dL_threshold = 1500
-z_values = np.linspace(0, 5, 1000)
-p_bg = np.array([p_bg_func(z) for z in z_values])
+# from math import erf
+# betas = []
+# dL_threshold = 1500
+# z_values = np.linspace(0, 5, 1000)
+# p_bg = np.array([p_bg_func(z) for z in z_values])
 
-euclid_p_reds = calculate_preds(np.array(euclid['zmean']), np.array(euclid['zsigma']), p_bg)
-euclid_pcat_values = normalize(z_values,np.sum(euclid_p_reds,axis=0))
+# euclid_p_reds = calculate_preds(np.array(euclid['zmean']), np.array(euclid['zsigma']), p_bg)
+# euclid_pcat_values = normalize(z_values,np.sum(euclid_p_reds,axis=0))
 
-for H0 in H0_values:
-    dL_values = np.array([dL(z,H0) for z in z_values])
-    erf_args = np.array([(dL_threshold-dLeach) / (np.sqrt(2) * 0.01 * dLeach) for dLeach in dL_values])
-    erf_values = np.array([erf(arg) for arg in erf_args])
-    PGW_values = 0.5 * (1+erf_values)
-    plt.plot(z_values,PGW_values,label=H0)
-    beta = np.trapz(PGW_values*euclid_pcat_values,z_values)
-    betas.append(beta)
-plt.legend()
-plt.show()
+# for H0 in H0_values:
+#     dL_values = np.array([dL(z,H0) for z in z_values])
+#     erf_args = np.array([(dL_threshold-dLeach) / (np.sqrt(2) * 0.01 * dLeach) for dLeach in dL_values])
+#     erf_values = np.array([erf(arg) for arg in erf_args])
+#     PGW_values = 0.5 * (1+erf_values)
+#     plt.plot(z_values,PGW_values,label=H0)
+#     beta = np.trapz(PGW_values*euclid_pcat_values,z_values)
+#     betas.append(beta)
+# plt.legend()
+# plt.show()
 
-betas = np.array(betas)
-plt.plot(H0_values, betas)
+# betas = np.array(betas)
+# plt.plot(H0_values, betas)
 
 #%% START / RESTART 
 all_posteriors_nobeta = {}
 
 #%% GENERATING H0 POSTERIOR IN A LOOP
 n_events = 0
-while n_events < 50:
+while n_events < 10:
     # Generating event
     hostra, hostdec, hostz = choose_host_galaxy(euclid,possible_host_indexs)
     hostdL = dL(hostz,true_H0)
-    print(f'host chosen: coords=({hostra,hostdec}), z={hostz}, dL={hostdL}')
+    print(f'host: coords=({hostra,hostdec}), z={hostz}, dL={hostdL}')
     detected = check_event_detected(hostra, hostdec, hostz, hostdL)
     if detected is False:
         print('event not detected, skipped')
@@ -322,9 +332,6 @@ while n_events < 50:
     healpix_indexs = galaxy_catalog['HP_Index']
 
     # Calculating
-    # z_values = np.linspace(zcatmin, zcatmax, 500)
-    # p_bg = np.array([p_bg_func(z) for z in z_values])
-    print(n_events,'p_bg calculated')
     p_reds = calculate_preds(zmeans, zsigmas, p_bg)
     posterior_nobeta = calculate_posterior_nobeta(H0_values, p_reds, mostprob_df)
     posterior_nobeta = normalize(H0_values,posterior_nobeta)
