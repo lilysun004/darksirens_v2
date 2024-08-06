@@ -10,6 +10,7 @@ from astropy import units as u
 from astropy.io import fits
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
+import shutil
 
 true_H0 = 67
 Omega_m = 0.319
@@ -24,8 +25,8 @@ sh_template = """lalapps_inspinj \\
 -o inj.xml \\
 --m-distr fixMasses --fixed-mass1 {m1} --fixed-mass2 {m2} \\
 --t-distr uniform --time-step 7200 \\
---gps-start-time 1000000000 \\
---gps-end-time 1000007200 \\
+--gps-start-time {t_start} \\
+--gps-end-time {t_end} \\
 --d-distr volume \\
 --min-distance {min_dL}e3 --max-distance {max_dL}e3 \\
 --l-distr fixed --longitude {RA} --latitude {Dec} --i-distr uniform \\
@@ -34,16 +35,14 @@ sh_template = """lalapps_inspinj \\
 
 bayestar-sample-model-psd \\
 -o psd.xml \\
---H1=aLIGOZeroDetHighPower \
---L1=aLIGOZeroDetHighPower \
---I1=aLIGOZeroDetHighPower \
---V1=AdvVirgo \
---K1=KAGRA
+--H1=aLIGOZeroDetHighPower \\
+--L1=aLIGOZeroDetHighPower \\
+--V1=AdvVirgo
 
 bayestar-realize-coincs \\
 -o coinc.xml \\
 inj.xml --reference-psd psd.xml \\
---detector H1 L1 I1 V1 K1 \\
+--detector H1 L1 V1 \\
 --measurement-error gaussian-noise \\
 --snr-threshold 4.0 \\
 --net-snr-threshold 12.0 \\
@@ -52,6 +51,13 @@ inj.xml --reference-psd psd.xml \\
 
 bayestar-localize-coincs coinc.xml
 """
+
+# --E1=EinsteinTelescopeP1600143 \\
+# --E2=EinsteinTelescopeP1600143 \\
+# --E3=EinsteinTelescopeP1600143 \\
+# --X1=CosmicExplorerP1600143
+
+# --detector E1 E2 E3 X1 \\
 
 #%% Functions
 mmin, mmax = 2.2, 86.16
@@ -82,6 +88,9 @@ def draw_from_mass_distr_m2(m1):
     p_m2_values = np.array([p2(m1,m2) for m2 in m_values])
     p_m2_values = p_m2_values/np.sum(p_m2_values)
     return np.random.choice(m_values,p=p_m2_values)
+
+def draw_from_time(start=1000000000,period=3.156e7):
+    return np.random.uniform(start, start+period)
 
 def E(z):
     return np.sqrt(Omega_m*(1+z)**3 + Omega_lamb)
@@ -129,24 +138,64 @@ def confidence_interval(x,y,ci): # assumes x is equally spaced array!
     return min(interval_x), max(interval_x)
 
 #%% Load Euclid
-euclid = pd.read_parquet('../subeuclid_rotated.parquet')
+euclid = pd.read_parquet('../subeuclid_fullsky.parquet')
 possible_host_indexs = euclid.index.to_numpy()
+original_directory = os.getcwd()
 
-#%% Generate Parameters
-params = {}
-n_events_sofar = 0
-n_events = 10
-while n_events_sofar < n_events:
+#%% GENERATE EVENTS AND SKYMAPS
+os.chdir(original_directory)
+
+params_all = {}
+n_events_sofar = 32
+n_events_target = 50
+while n_events_sofar < n_events_target:
+    #Draw parameters
     params_n = {}
     host_index = np.random.choice(possible_host_indexs)
     host_truez = euclid['ztrue'][host_index]
     host_dL = dL(host_truez,true_H0)
-    if host_dL > 1500:
-        continue
     host_ra = euclid['RA'][host_index]
     host_dec = euclid['Dec'][host_index]
     m1 = draw_from_mass_distr_m1()
     m2 = draw_from_mass_distr_m2(m1)
+    t_start = draw_from_time()
+    t_end = t_start + 7200
+    print(n_events_sofar, 'params drawn')
+
+    # Create temporary folder and file
+    folder_name = 'event'+'{:03}'.format(n_events_sofar)
+    os.makedirs(folder_name, exist_ok=True)
+    script_content = sh_template.format(
+        RA=host_ra,
+        Dec=host_dec,
+        min_dL=host_dL-0.01,
+        max_dL=host_dL+0.01,
+        m1=m1,
+        m2=m2,
+        t_start=t_start,
+        t_end=t_end
+    )
+    print(n_events_sofar, 'truez', host_truez)
+    file_path = os.path.join(folder_name, "gen.sh")
+    with open(file_path, "w") as file:
+        file.write(script_content)
+    os.chmod(file_path, 0o755)
+    print(n_events_sofar, '.sh created')
+
+    #Execute Bayestar
+    os.chdir(folder_name)
+    sh_files = [f for f in os.listdir() if f.endswith('.sh')]
+    subprocess.run(['bash', sh_files[0]], check=True, stdout=subprocess.DEVNULL)
+
+    print(os.getcwd())
+    #Check if fits exists
+    fits_files = [f for f in os.listdir() if f.endswith('.fits')]
+    if not fits_files:
+        os.chdir(original_directory)
+        shutil.rmtree(folder_name)
+        print(n_events_sofar, 'no .fits, try again')
+        continue
+    print('.fits file created', n_events_sofar)
     params_n = {'RA':host_ra,
                 'Dec':host_dec,
                 'min_dL':host_dL-0.01,
@@ -154,54 +203,16 @@ while n_events_sofar < n_events:
                 'm1':m1,
                 'm2':m2,
                 'truez':host_truez,
-                'truedL':host_dL}
-    params[n_events_sofar] = params_n
-    n_events_sofar += 1
+                'truedL':host_dL,
+                't_start':t_start,
+                't_end':t_end}
+    params_all[n_events_sofar] = params_n
+    n_events_sofar +=1
+    os.chdir(original_directory)
 
-#%% GENERATE EVENT FOLDERS AND .SH
-for i in range(n_events):
-    folder_name = 'event_'+'{:03}'.format(i+1)
-    os.makedirs(folder_name, exist_ok=True)
-    
-    script_content = sh_template.format(
-        RA=params[i]['RA'],
-        Dec=params[i]['Dec'],
-        min_dL=params[i]['min_dL'],
-        max_dL=params[i]['max_dL'],
-        m1=params[i]['m1'],
-        m2=params[i]['m2']
-    )
+print('DONE!!!')
 
-    file_path = os.path.join(folder_name, "gen.sh")
-    
-    with open(file_path, "w") as file:
-        file.write(script_content)
-    
-    # Make the script executable
-    os.chmod(file_path, 0o755)
-
-print("10 script files have been generated and saved in their respective folders.")
-
-# %%
-os.environ['LAL_DATA_PATH'] = '/Users/xq/Desktop/dark_sirens'
-original_directory = os.getcwd()
-# %%
-subfolders = [f.path for f in os.scandir() if f.is_dir()]
-subfolders.sort()
-for subfolder in subfolders:
-    os.chdir(subfolder)
-    sh_files = [f for f in os.listdir() if f.endswith('.sh')]
-    for sh_file in sh_files:
-        try:
-            print(os.getcwd())
-            print(f"Running {subfolder}...")
-            subprocess.run(['bash', sh_file], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error running {subfolder}: {e}")
-        finally:
-            os.chdir(original_directory)
-
-print('Done running Bayestars on all possible events')
+all_posteriors_nobeta = {}
 #%%
 def find_index_from_coords(coords, big_indexs, sorter, max_nside):
     ra, dec = coords
@@ -259,6 +270,8 @@ def get_galaxy_catalog(euclid, filename):
 
 def find_catalog_zlimits(galaxy_catalog):
     max_dL = max(galaxy_catalog['DistMu'])*2
+    if max_dL == np.inf:
+        raise ValueError('DistMu has inf, moving on')
     dL_values = np.linspace(0,max_dL,1000)
     p_dL = np.zeros(len(dL_values))
     probdensity = np.array(galaxy_catalog['ProbDensity'])
@@ -312,42 +325,143 @@ def calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog):
 z_values = np.linspace(0, 5, 1000)
 p_bg = np.array([p_bg_func(z) for z in z_values])
 
+#%% READING PARAMETERS AGAIN
+import re
+params_all = {}
+
+patterns = {
+    'm1': r'--fixed-mass1 (\d+\.?\d*)',
+    'm2': r'--fixed-mass2 (\d+\.?\d*)',
+    't_start': r'--gps-start-time (\d+\.\d+)',
+    't_end': r'--gps-end-time (\d+\.\d+)',
+    'min_dL': r'--min-distance (\d+\.\d+)e3',
+    'max_dL': r'--max-distance (\d+\.\d+)e3',
+    'RA': r'--longitude (-?\d+\.\d+)',
+    'Dec': r'--latitude (-?\d+\.\d+)'
+}
+
+subfolders = [f.path for f in os.scandir() if f.is_dir()]
+subfolders.sort()
+for subfolder in subfolders:
+    params_n = {}
+    event_n = int(subfolder[-3:])
+    file_path = subfolder+'/gen.sh'
+    with open(file_path, 'r') as file:
+        sh_string = file.read()
+    for key, pattern in patterns.items():
+        match = re.search(pattern, sh_string)
+        params_n[key] = float(match.group(1))
+    params_n['truedL'] = (params_n['min_dL'] + params_n['max_dL'])/2
+    params_n['truez'] = z_finder(params_n['truedL'],true_H0)
+    params_all[event_n] = params_n
+
+
 #%%
 plot=True
+n_events_sofar_post = 30
+n_events_end_post = 50
 
-for subfolder in subfolders:
+for event_n in range(n_events_sofar_post,n_events_end_post):
+    subfolder = 'event'+'{:03}'.format(event_n)
     files = os.listdir(subfolder)
     fits_files = [f for f in files if f.endswith('.fits')]
-    if fits_files:
-        event_n = int(subfolder[-3:])-1
-        filename = subfolder + '/' + fits_files[0]
-        print('processing ',filename)
-        allz_galaxy_catalog = get_galaxy_catalog(euclid,filename)
-        if len(allz_galaxy_catalog) == 0:
-            continue
-        z_lower_bound, z_upper_bound = find_catalog_zlimits(allz_galaxy_catalog)
-        galaxy_catalog = cut_catalog_z(galaxy_catalog,z_lower_bound,z_upper_bound)
+    filename = subfolder + '/' + fits_files[0]
+    print('processing',filename)
+    allz_galaxy_catalog = get_galaxy_catalog(euclid,filename)
+    if len(allz_galaxy_catalog) == 0:
+        print(subfolder, 'localised where catalog empty')
+        continue
+    z_lower_bound, z_upper_bound = find_catalog_zlimits(allz_galaxy_catalog)
+    galaxy_catalog = cut_catalog_z(allz_galaxy_catalog,z_lower_bound,z_upper_bound)
+    true_ra, true_dec = params_all[event_n]['RA'], params_all[event_n]['Dec']
+    true_z = params_all[event_n]['truez']
+    true_dL = params_all[event_n]['truedL']
+    if plot is True:
         plt.scatter(galaxy_catalog['RA'], galaxy_catalog['Dec'], c=galaxy_catalog['ProbDensity'], s=4, cmap='inferno')
         plt.colorbar(label='ProbabilityDensity')
-        true_ra, true_dec = params[event_n]['RA'], params[event_n]['Dec']
-        true_z = params[event_n]['truez']
-        true_dL = params[event_n]['truedL']
+        plt.scatter(true_ra, true_dec, marker='o', edgecolor='blue', facecolor='none', s=100,label='true_z='+f'{true_z:.3f}, true_dL='+f'{true_dL:.3f}')
+        plt.title(f'Event {event_n}, (N={len(galaxy_catalog)})')
+        plt.legend(bbox_to_anchor=(1, 1))
+        plt.xlabel('RA (degrees)')
+        plt.ylabel('Dec (degrees)')
+        plt.show()
+    zmeans = galaxy_catalog['zmean']
+    zsigmas = galaxy_catalog['zsigma']
+    p_reds = calculate_preds(zmeans, zsigmas, p_bg)
+    posterior_nobeta = calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog)
+    all_posteriors_nobeta[(event_n,true_z)] = posterior_nobeta
+    if plot is True:
+        plt.plot(H0_values,posterior_nobeta)
+        plt.show()
+    np.save(subfolder+'/posterior_nobeta.npy',posterior_nobeta)
 
-        if plot is True:
-            plt.scatter(true_ra, true_dec, marker='o', edgecolor='blue', facecolor='none', s=100,label='true_z='+f'{true_z:.3f}, true_dL='+f'{true_dL:.3f}')
-            plt.title(f'Event {event_n}, (N={len(galaxy_catalog)})')
-            plt.legend(bbox_to_anchor=(1, 1))
-            plt.xlabel('RA (degrees)')
-            plt.ylabel('Dec (degrees)')
-            plt.show()
+print('POSTERIORS DONE')
+#%% PLOTTING INDIVIDUAL POSTERIORS NO BETA 
+total_n = 50
+all_posteriors_nobeta = {}
+for event_n in range(total_n):
+    subfolder = 'event'+'{:03}'.format(event_n)
+    posterior_nobeta = np.load(subfolder+'/posterior_nobeta.npy')
+    all_posteriors_nobeta[(event_n,params_all[event_n]['truez'])] = posterior_nobeta
 
-        zmeans = galaxy_catalog['zmean']
-        zsigmas = galaxy_catalog['zsigma']
-        p_reds = calculate_preds(zmeans, zsigmas, p_bg)
-        posterior_nobeta = calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog)
+for hostz, posterior_nobeta in all_posteriors_nobeta.items():
+    plt.plot(H0_values,posterior_nobeta,label='host_z='+str(hostz))
+plt.legend(fontsize='small', bbox_to_anchor=(1, 1))
+plt.title('individual posteriors, no beta')
+plt.show()
 
-        if plot is True:
-            plt.plot(H0_values,posterior_nobeta)
-            plt.show()
+#%% BETAS
+betas_values = np.load('../betas/betas_0801_cutcat1.npy')
+coefficients = np.polyfit(H0_values, betas_values, 3)
+beta_cubic_function = np.poly1d(coefficients)
+betas = beta_cubic_function(H0_values)
 
-# %%
+plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
+plt.plot(H0_values,betas_values,label='original')
+plt.legend()
+plt.title("Betas against H0")
+
+# with open("my_dict.json", "r") as file:
+#     loaded_dict = json.load(file)
+
+#%% ADDING IN BETA
+all_posteriors = {}
+for hostz, posterior_nobeta in all_posteriors_nobeta.items():
+    if hostz[0] == 9:
+        continue
+    posterior = posterior_nobeta / betas
+    posterior = normalize(H0_values, posterior)
+    all_posteriors[hostz] = posterior
+
+#%% PLOTTING INDIVIDUAL POSTERIORS WITH BETA 
+import matplotlib.cm as cm
+colormap = cm.seismic
+normalize_color = plt.Normalize(0, 10)
+i=0
+for hostz, posterior in all_posteriors.items():
+    color = colormap(normalize_color(i))
+    plt.plot(H0_values,posterior,label='host_z='+str(hostz),color=color)
+    i+=1
+plt.legend(fontsize='small', bbox_to_anchor=(1, 1))
+plt.title('individual posteriors, beta')
+
+plt.show()
+
+#%% PLOTTING COMBINED POSTERIOR
+combined_posterior = np.ones(len(H0_values))
+i=0
+for hostz, posterior in all_posteriors.items():
+    if i > 30:
+        break
+    combined_posterior *= 100*posterior
+    i+=1
+plt.plot(H0_values,combined_posterior)
+plt.plot([true_H0,true_H0],[0,max(combined_posterior)],
+         linestyle='--',label='true'+r'$H_0$'+f'={true_H0}')
+plt.title('combined posterior')
+plt.show()
+
+#%% PLOTTING DISTRIBUTION OF Z EVENTS
+events_z = np.array(list(all_posteriors_nobeta.keys()[1]))
+plt.hist(events_z,bins=np.linspace(0,1,10))
+plt.show()

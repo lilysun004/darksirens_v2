@@ -86,14 +86,18 @@ def draw_from_mass_distr_m2(m1):
     return np.random.choice(m_values,p=p_m2_values)
 
 #%% LOADING EUCLID
-euclid_df = pd.read_parquet('subeuclid_rotated.parquet')
+euclid_df = pd.read_parquet('subeuclid_all.parquet')
+euclid_catalog = euclid_df.sample(frac=0.05)
+euclid_catalog = euclid_catalog[(euclid_catalog['ztrue']<1)]
+euclid_catalog.reset_index(inplace=True,drop=True)
+print(euclid_catalog)
 
 #%% PREPARING DATA AS ARRAYS
 H0_values = np.linspace(20,140,25)
 truez = np.array(euclid_catalog['ztrue'])
 zmeans = np.array(euclid_catalog['zmean'])
-zsigmas = 0.05 * (1+zmeans) #model for photometric z errors
-z_values = np.linspace(0.01,1,50)
+zsigmas = np.array(euclid_catalog['zsigma'])
+z_values = np.linspace(0.01,2,100)
 
 p_bg_values = np.array([p_bg_func(z) for z in z_values])
 
@@ -146,6 +150,7 @@ def compute_PGW(z,H0,ndraws):
 compute_PGW_vectorized = np.vectorize(compute_PGW)
 
 #%%
+import json
 PGW_for_each_H0 = {}
 betas = []
 ndraws = 100
@@ -164,7 +169,9 @@ for H0 in H0_values:
     PGW_for_each_H0[H0] = PGW_values
     betas.append(beta)
     print(H0,' done')
-np.save('betas/betas_0731.npy',betas)
+np.save('betas/betas_0801_cutcat1.npy',betas)
+with open("betas/betas_0801_cutcat1.json", "w") as file:
+    json.dump(PGW_for_each_H0, file)
 
 #%% P_GW PLOTS AGAINST Z, FOR DIFFERENT H0
 for H0 in H0_values:
@@ -174,3 +181,4 @@ plt.show()
 
 #%% BETA PLOT AGAINST H0
 plt.plot(H0_values,betas)
+# %%
