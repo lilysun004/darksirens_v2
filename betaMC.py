@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.integrate import quad
 from pycbc.waveform import get_fd_waveform
-from pycbc.filter import sigma
+from pycbc.filter import matched_filter
 from pycbc.psd import analytical
 
 Omega_m = 0.319
@@ -174,11 +174,15 @@ with open("betas/betas_0801_cutcat1.json", "w") as file:
     json.dump(PGW_for_each_H0, file)
 
 #%% P_GW PLOTS AGAINST Z, FOR DIFFERENT H0
+with open("betas/betas_0801_cutcat1.json", "r") as file:
+    PGW_for_each_H0 = json.load(file)
+
 for H0 in H0_values:
     plt.plot(z_values,PGW_for_each_H0[H0],label=H0)
 plt.legend()
 plt.show()
 
 #%% BETA PLOT AGAINST H0
+betas = np.load('betas/betas_0801_cutcat1.npy')
 plt.plot(H0_values,betas)
 # %%
