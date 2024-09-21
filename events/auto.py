@@ -139,6 +139,8 @@ def confidence_interval(x,y,ci): # assumes x is equally spaced array!
 
 #%% Load Euclid
 euclid = pd.read_parquet('../subeuclid_fullsky.parquet')
+euclid = euclid.sample(frac=0.05)
+euclid.reset_index(inplace=True,drop=True)
 possible_host_indexs = euclid.index.to_numpy()
 original_directory = os.getcwd()
 
@@ -146,8 +148,8 @@ original_directory = os.getcwd()
 os.chdir(original_directory)
 
 params_all = {}
-n_events_sofar = 32
-n_events_target = 50
+n_events_sofar = 200
+n_events_target = 500
 while n_events_sofar < n_events_target:
     #Draw parameters
     params_n = {}
@@ -185,7 +187,8 @@ while n_events_sofar < n_events_target:
     #Execute Bayestar
     os.chdir(folder_name)
     sh_files = [f for f in os.listdir() if f.endswith('.sh')]
-    subprocess.run(['bash', sh_files[0]], check=True, stdout=subprocess.DEVNULL)
+    with subprocess.Popen(['bash', sh_files[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+            process.communicate()  # Ensure the process completes
 
     print(os.getcwd())
     #Check if fits exists
@@ -212,8 +215,9 @@ while n_events_sofar < n_events_target:
 
 print('DONE!!!')
 
-all_posteriors_nobeta = {}
 #%%
+all_posteriors_nobeta = {}
+os.chdir(original_directory)
 def find_index_from_coords(coords, big_indexs, sorter, max_nside):
     ra, dec = coords
     match_ipix = ah.lonlat_to_healpix(ra, dec, max_nside, order='nested')
@@ -285,8 +289,8 @@ def find_catalog_zlimits(galaxy_catalog):
     return z_lower_bound, z_upper_bound
 
 def cut_catalog_z(galaxy_catalog,z_lower_bound,z_upper_bound):
-    galaxy_catalog = allz_galaxy_catalog[(allz_galaxy_catalog['zmean']>z_lower_bound)
-                                            &(allz_galaxy_catalog['zmean']<z_upper_bound)]
+    galaxy_catalog = galaxy_catalog[(galaxy_catalog['zmean']>z_lower_bound)
+                                            &(galaxy_catalog['zmean']<z_upper_bound)]
     result = galaxy_catalog.reset_index(drop=True)
     return result
 
@@ -355,11 +359,10 @@ for subfolder in subfolders:
     params_n['truez'] = z_finder(params_n['truedL'],true_H0)
     params_all[event_n] = params_n
 
-
 #%%
-plot=True
-n_events_sofar_post = 30
-n_events_end_post = 50
+plot=False
+n_events_sofar_post = 0
+n_events_end_post = 100
 
 for event_n in range(n_events_sofar_post,n_events_end_post):
     subfolder = 'event'+'{:03}'.format(event_n)
@@ -368,7 +371,7 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     filename = subfolder + '/' + fits_files[0]
     print('processing',filename)
     allz_galaxy_catalog = get_galaxy_catalog(euclid,filename)
-    if len(allz_galaxy_catalog) == 0:
+    if len(galaxy_catalog) == 0:
         print(subfolder, 'localised where catalog empty')
         continue
     z_lower_bound, z_upper_bound = find_catalog_zlimits(allz_galaxy_catalog)
@@ -397,71 +400,103 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
 
 print('POSTERIORS DONE')
 #%% PLOTTING INDIVIDUAL POSTERIORS NO BETA 
-total_n = 50
+total_n = 100
 all_posteriors_nobeta = {}
 for event_n in range(total_n):
     subfolder = 'event'+'{:03}'.format(event_n)
     posterior_nobeta = np.load(subfolder+'/posterior_nobeta.npy')
     all_posteriors_nobeta[(event_n,params_all[event_n]['truez'])] = posterior_nobeta
 
-for hostz, posterior_nobeta in all_posteriors_nobeta.items():
-    plt.plot(H0_values,posterior_nobeta,label='host_z='+str(hostz))
-plt.legend(fontsize='small', bbox_to_anchor=(1, 1))
-plt.title('individual posteriors, no beta')
-plt.show()
+import plotly.graph_objects as go
+fig = go.Figure()
+
+for i, (hostz, posterior_nobeta) in enumerate(all_posteriors_nobeta.items()):
+    fig.add_trace(go.Scatter(
+        x=H0_values,
+        y=posterior_nobeta,
+        mode='lines',
+        name=f'z={hostz},i={i}'
+    ))
+
+fig.update_layout(
+    title=f'Posteriors no betas',
+    xaxis_title='H0',
+    yaxis_title='posterior',
+    legend_title='hostz'
+)
+
+html_file = 'posteriors_no_betas.html'
+fig.write_html(html_file)
+import webbrowser
+webbrowser.open('file://' + os.path.realpath(html_file))
+
 
 #%% BETAS
-betas_values = np.load('../betas/betas_0801_cutcat1.npy')
+## RAW BETAS
+# betas = np.load('../betaMC/betas_0921.npy')
+
+#### CUBIC FITTING
+betas_values = np.load('../betaMC/betas_0921.npy')
 coefficients = np.polyfit(H0_values, betas_values, 3)
 beta_cubic_function = np.poly1d(coefficients)
 betas = beta_cubic_function(H0_values)
+
+##### PURE CUBIC
+# betas = H0_values**3
 
 plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
 plt.plot(H0_values,betas_values,label='original')
 plt.legend()
 plt.title("Betas against H0")
 
-# with open("my_dict.json", "r") as file:
-#     loaded_dict = json.load(file)
-
 #%% ADDING IN BETA
 all_posteriors = {}
 for hostz, posterior_nobeta in all_posteriors_nobeta.items():
-    if hostz[0] == 9:
-        continue
     posterior = posterior_nobeta / betas
     posterior = normalize(H0_values, posterior)
     all_posteriors[hostz] = posterior
 
 #%% PLOTTING INDIVIDUAL POSTERIORS WITH BETA 
-import matplotlib.cm as cm
-colormap = cm.seismic
-normalize_color = plt.Normalize(0, 10)
-i=0
+fig = go.Figure()
 for hostz, posterior in all_posteriors.items():
-    color = colormap(normalize_color(i))
-    plt.plot(H0_values,posterior,label='host_z='+str(hostz),color=color)
-    i+=1
-plt.legend(fontsize='small', bbox_to_anchor=(1, 1))
-plt.title('individual posteriors, beta')
+    fig.add_trace(go.Scatter(
+        x=H0_values,
+        y=posterior,
+        mode='lines',
+        name=f'z={hostz},i={i}'
+    ))
 
-plt.show()
+fig.update_layout(
+    title=f'Posteriors with betas',
+    xaxis_title='H0',
+    yaxis_title='posterior',
+    legend_title='hostz'
+)
+
+html_file = 'posteriors_with_betas.html'
+fig.write_html(html_file)
+import webbrowser
+webbrowser.open('file://' + os.path.realpath(html_file))
 
 #%% PLOTTING COMBINED POSTERIOR
 combined_posterior = np.ones(len(H0_values))
 i=0
 for hostz, posterior in all_posteriors.items():
-    if i > 30:
-        break
     combined_posterior *= 100*posterior
     i+=1
 plt.plot(H0_values,combined_posterior)
 plt.plot([true_H0,true_H0],[0,max(combined_posterior)],
          linestyle='--',label='true'+r'$H_0$'+f'={true_H0}')
 plt.title('combined posterior')
+plt.xlim(30,140)
+plt.ylim(0,1.2*max(combined_posterior[3:]))
 plt.show()
 
 #%% PLOTTING DISTRIBUTION OF Z EVENTS
-events_z = np.array(list(all_posteriors_nobeta.keys()[1]))
+events_z = []
+for _, hostz in all_posteriors_nobeta.keys():
+    events_z.append(hostz)
+events_z = np.array(events_z)
 plt.hist(events_z,bins=np.linspace(0,1,10))
 plt.show()
+# %%

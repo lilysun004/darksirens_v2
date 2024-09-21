@@ -1,12 +1,12 @@
 lalapps_inspinj \
 -o inj.xml \
---m-distr fixMasses --fixed-mass1 21.614174174174174 --fixed-mass2 75.6544944944945 \
+--m-distr fixMasses --fixed-mass1 47.91995995995996 --fixed-mass2 61.871271271271276 \
 --t-distr uniform --time-step 7200 \
---gps-start-time 1027442315.6907299 \
---gps-end-time 1027449515.6907299 \
+--gps-start-time 1028318090.997671 \
+--gps-end-time 1028325290.997671 \
 --d-distr volume \
---min-distance 2555.0857182861932e3 --max-distance 2555.1057182861937e3 \
---l-distr fixed --longitude -3.62884521484375 --latitude -36.335487365722656 --i-distr uniform \
+--min-distance 2960.18770959135e3 --max-distance 2960.2077095913505e3 \
+--l-distr fixed --longitude 66.28377532958984 --latitude 45.458866119384766 --i-distr uniform \
 --f-lower 20 --disable-spin \
 --waveform SEOBNRv4_ROM
 
