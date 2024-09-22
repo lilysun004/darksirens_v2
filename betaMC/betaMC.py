@@ -18,8 +18,8 @@ Omega_m = 0.319
 Omega_lamb = 1- Omega_m
 c = 299792.458
 
-H0_prior_min, H0_prior_max = 20, 140
-H0_values = np.linspace(H0_prior_min,H0_prior_max,25)
+H0_prior_min, H0_prior_max = 20.0, 140.0
+H0_values = np.arange(H0_prior_min,H0_prior_max+5.0,5.0)
 
 # Define the template for the .sh file
 sh_template = """lalapps_inspinj \\
@@ -49,8 +49,6 @@ inj.xml --reference-psd psd.xml \\
 --net-snr-threshold 12.0 \\
 --min-triggers 2 \\
 --keep-subthreshold
-
-bayestar-localize-coincs coinc.xml
 """
 #
 # --E1=EinsteinTelescopeP1600143 \\
@@ -181,19 +179,20 @@ def compute_PGW(z,H0,n_draws):
         with subprocess.Popen(['bash', sh_files[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
             process.communicate()  # Ensure the process completes
         
-        # if os.path.getsize('coinc.xml') == 0:
-        #     print("No event detected")
-        # else:
-        #     n_detected += 1
+        if os.path.getsize('coinc.xml') < 50 * 1024:
+            print("No event detected")
+        else:
+            print('Event detected')
+            n_detected += 1
         
         # Check if fits exists
-        fits_files = [f for f in os.listdir() if f.endswith('.fits')]
-        if fits_files:
-            n_detected += 1
+        # fits_files = [f for f in os.listdir() if f.endswith('.fits')]
+        # if fits_files:
+        #     n_detected += 1
         
         # Clear fits and xml files, move on to next
         for file in os.listdir():
-            if file.endswith('.fits') or file.endswith('.xml') or file.endswith('.sh'):
+            if file.endswith('.xml') or file.endswith('.sh'):
                 os.remove(file)
 
         n_drawn_sofar += 1
@@ -204,7 +203,7 @@ def compute_PGW(z,H0,n_draws):
 
 #%% GENERATE EVENTS AND SKYMAPS
 n_draws = 20
-for H0 in H0_values:
+for H0 in H0_values[-1:]:
     PGW_values = []
     for z in z_values:
         if len(PGW_values) > 2 and PGW_values[-1] == 0 and PGW_values[-2] == 0:
@@ -223,12 +222,27 @@ for H0 in H0_values:
 # with open("PGW_dict.json", "w") as file:
 #     json.dump(PGW_dict, file)
 
+#%% COMBINING DIFFERENT RUNS
+for H0 in H0_values:
+    ndraws20 = np.load(f'ndraws=20/PGW_values_H0={H0}.npy')
+    ndraws30 = np.load(f'ndraws=30/PGW_values_H0={H0}.npy')
+    PGW_values = 0.4*ndraws20 + 0.6*ndraws30
+    np.save(f'PGW_values_H0={H0}.npy',PGW_values)
+
+#%% PLOTTING
+for H0 in H0_values:
+    PGW_values = np.load(f'ndraws=20/PGW_values_H0={H0}.npy')
+    plt.plot(z_values,PGW_values,label=H0)
+
+plt.legend()
+
 #%% READING INTO DICTIONARY
 PGW_values_dict = {}
 for H0 in H0_values:
-    PGW_values = np.load(f'ndraws=30/PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
     PGW_values_dict[H0] = PGW_values
 
+#%%
 euclid = pd.read_parquet('../subeuclid_fullsky.parquet')
 euclid_catalog = euclid.sample(frac=0.05)
 # euclid_catalog = euclid_catalog[(euclid_catalog['ztrue']<1)]
@@ -264,8 +278,8 @@ for H0 in H0_values:
     betas.append(beta)
 
 plt.plot(H0_values,betas)
-plt.title('beta, using PGW(z_i)')
-np.save('betas_0921.npy',betas)
+plt.title('beta')
+np.save('betas_0922.npy',betas)
 
 #%% CALCULATING P_CAT USING GAUSSIAN
 p_reds = []
