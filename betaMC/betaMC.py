@@ -231,7 +231,7 @@ for H0 in H0_values:
 
 #%% PLOTTING
 for H0 in H0_values:
-    PGW_values = np.load(f'ndraws=20/PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
     plt.plot(z_values,PGW_values,label=H0)
 
 plt.legend()
