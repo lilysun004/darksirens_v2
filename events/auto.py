@@ -138,9 +138,7 @@ def confidence_interval(x,y,ci): # assumes x is equally spaced array!
     return min(interval_x), max(interval_x)
 
 #%% Load Euclid
-euclid = pd.read_parquet('../subeuclid_fullsky.parquet')
-euclid = euclid.sample(frac=0.05)
-euclid.reset_index(inplace=True,drop=True)
+euclid = pd.read_parquet('../subeuclid_fullsky_sub.parquet')
 possible_host_indexs = euclid.index.to_numpy()
 original_directory = os.getcwd()
 
@@ -148,13 +146,16 @@ original_directory = os.getcwd()
 os.chdir(original_directory)
 
 params_all = {}
-n_events_sofar = 200
+n_events_sofar = 50
 n_events_target = 500
 while n_events_sofar < n_events_target:
     #Draw parameters
     params_n = {}
     host_index = np.random.choice(possible_host_indexs)
     host_truez = euclid['ztrue'][host_index]
+    if host_truez > 1.5:
+        print('>1.5')
+        continue
     host_dL = dL(host_truez,true_H0)
     host_ra = euclid['RA'][host_index]
     host_dec = euclid['Dec'][host_index]
@@ -162,7 +163,7 @@ while n_events_sofar < n_events_target:
     m2 = draw_from_mass_distr_m2(m1)
     t_start = draw_from_time()
     t_end = t_start + 7200
-    print(n_events_sofar, 'params drawn')
+    # print(n_events_sofar, 'params drawn')
 
     # Create temporary folder and file
     folder_name = 'event'+'{:03}'.format(n_events_sofar)
@@ -182,7 +183,7 @@ while n_events_sofar < n_events_target:
     with open(file_path, "w") as file:
         file.write(script_content)
     os.chmod(file_path, 0o755)
-    print(n_events_sofar, '.sh created')
+    # print(n_events_sofar, '.sh created')
 
     #Execute Bayestar
     os.chdir(folder_name)
@@ -190,7 +191,7 @@ while n_events_sofar < n_events_target:
     with subprocess.Popen(['bash', sh_files[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
             process.communicate()  # Ensure the process completes
 
-    print(os.getcwd())
+    # print(os.getcwd())
     #Check if fits exists
     fits_files = [f for f in os.listdir() if f.endswith('.fits')]
     if not fits_files:
@@ -218,6 +219,7 @@ print('DONE!!!')
 #%%
 all_posteriors_nobeta = {}
 os.chdir(original_directory)
+
 def find_index_from_coords(coords, big_indexs, sorter, max_nside):
     ra, dec = coords
     match_ipix = ah.lonlat_to_healpix(ra, dec, max_nside, order='nested')
@@ -225,6 +227,10 @@ def find_index_from_coords(coords, big_indexs, sorter, max_nside):
     return i
 
 def find_indexs_in_region(probdensity, pixel_areas, total_prob=0.9):
+    '''
+    Given an array of probability density and corresponding pixel areas
+    Finds the healpix index of the 90% region.
+    '''
     sorted_indexs = np.argsort(-probdensity)
     sorted_probdensity = probdensity[sorted_indexs]
     sorted_pixel_areas = pixel_areas[sorted_indexs]
@@ -235,6 +241,18 @@ def find_indexs_in_region(probdensity, pixel_areas, total_prob=0.9):
     return mostprob_nuniq_indexs
 
 def get_galaxy_catalog(euclid, filename):
+    '''
+    Takes in the euclid df with RA, Dec, ztrue, zmean, 
+    zsigma, and the sky localistion.
+
+    Returns the galaxy catalog keeping only galaxies 
+    within 90% localisation area.
+
+    For each galaxy, find the skymap information 
+    (prob density, dL mean and error, dLnorm) at that pixel.
+
+    Returns a new df with new columns.
+    '''
     skymap = QTable.read(filename)
     max_level = 29
     max_nside = ah.level_to_nside(max_level)
@@ -245,7 +263,9 @@ def get_galaxy_catalog(euclid, filename):
     probdensity = skymap['PROBDENSITY']
     pixel_areas = ah.nside_to_pixel_area(ah.level_to_nside(level))
 
-    mostprob_nuniq_indexs = find_indexs_in_region(probdensity, pixel_areas)
+    # healpix indexes of 90% region
+    mostprob_nuniq_indexs = find_indexs_in_region(probdensity, pixel_areas) 
+
     galaxy_catalog_list = []
     galaxy_nuniq_indexs = []
     mostprob_probdensities = []
@@ -253,12 +273,14 @@ def get_galaxy_catalog(euclid, filename):
     mostprob_distsigmas = []
     mostprob_distnorms = []
 
-    for row in euclid.itertuples(index=False):
+    for row in euclid.itertuples(index=False): # for each galaxy
         coords = row.RA * u.deg, row.Dec * u.deg
-        index = find_index_from_coords(coords, big_indexs, sorter, max_nside)
+        index = find_index_from_coords(coords, big_indexs, sorter, max_nside) #healpix index of galaxy
         galaxy_nuniq_indexs.append(index)
-        if index in mostprob_nuniq_indexs:
-            galaxy_catalog_list.append(row._asdict())
+        if index in mostprob_nuniq_indexs: #if galaxy is in 90% region
+            galaxy_catalog_list.append(row._asdict()) #add the galaxy information to result
+
+            # new columns added to result, representing values at that galaxy's position
             mostprob_probdensities.append(skymap[index]['PROBDENSITY'].value)
             mostprob_distmus.append(skymap[index]['DISTMU'].value)
             mostprob_distsigmas.append(skymap[index]['DISTSIGMA'].value)
@@ -273,9 +295,14 @@ def get_galaxy_catalog(euclid, filename):
     return galaxy_catalog
 
 def find_catalog_zlimits(galaxy_catalog):
+    '''
+    ## SHOULD THIS BE INCLUDED??? SOME PAPERS DON'T HAVE THIS CUT
+    Given a localisation region, finds the z_min and z_max to cut catalog,
+    based on dL_min and dL_max.
+    '''
     max_dL = max(galaxy_catalog['DistMu'])*2
     if max_dL == np.inf:
-        raise ValueError('DistMu has inf, moving on')
+        max_dL = 10000
     dL_values = np.linspace(0,max_dL,1000)
     p_dL = np.zeros(len(dL_values))
     probdensity = np.array(galaxy_catalog['ProbDensity'])
@@ -289,12 +316,20 @@ def find_catalog_zlimits(galaxy_catalog):
     return z_lower_bound, z_upper_bound
 
 def cut_catalog_z(galaxy_catalog,z_lower_bound,z_upper_bound):
+    '''
+    Performs a cut on galaxy catalog df
+    Keeps galaxies within (z_lower_bound, z_upper_bound)
+    '''
     galaxy_catalog = galaxy_catalog[(galaxy_catalog['zmean']>z_lower_bound)
                                             &(galaxy_catalog['zmean']<z_upper_bound)]
     result = galaxy_catalog.reset_index(drop=True)
     return result
 
 def calculate_preds(zmeans, zsigmas, p_bg):
+    '''
+    Returns an array of subarrays.
+    Each subarray represents probability of observing a galaxy at that redshift.
+    '''
     p_reds = []
     for j in range(len(zmeans)):
         zmean = zmeans[j]
@@ -315,7 +350,7 @@ def calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog):
             dLmean = galaxy_catalog.loc[j,'DistMu']
             dLsigma = galaxy_catalog.loc[j,'DistSigma']
             dLnorm = galaxy_catalog.loc[j,'DistNorm']
-            L_GW = prob_j * gaussian_likelihood(dL_values,dLmean,dLsigma) * dLnorm
+            L_GW = prob_j * gaussian_likelihood(dL_values,dLmean,dLsigma)#* dLnorm
             p_red = p_reds[j]
             to_integrate = L_GW*p_red
             integral = np.trapz(to_integrate,z_values)
@@ -330,6 +365,7 @@ z_values = np.linspace(0, 5, 1000)
 p_bg = np.array([p_bg_func(z) for z in z_values])
 
 #%% READING PARAMETERS AGAIN
+os.chdir(original_directory)
 import re
 params_all = {}
 
@@ -361,8 +397,8 @@ for subfolder in subfolders:
 
 #%%
 plot=False
-n_events_sofar_post = 0
-n_events_end_post = 100
+n_events_sofar_post = 406
+n_events_end_post = 429
 
 for event_n in range(n_events_sofar_post,n_events_end_post):
     subfolder = 'event'+'{:03}'.format(event_n)
@@ -370,7 +406,7 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     fits_files = [f for f in files if f.endswith('.fits')]
     filename = subfolder + '/' + fits_files[0]
     print('processing',filename)
-    allz_galaxy_catalog = get_galaxy_catalog(euclid,filename)
+    allz_galaxy_catalog = get_galaxy_catalog(euclid,filename) #allz_
     if len(galaxy_catalog) == 0:
         print(subfolder, 'localised where catalog empty')
         continue
@@ -399,8 +435,16 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     np.save(subfolder+'/posterior_nobeta.npy',posterior_nobeta)
 
 print('POSTERIORS DONE')
+
+#%% DELETING ALL POSTERIORS NO BETA
+# import glob
+# for folder, subfolders, files in os.walk(os.getcwd()):
+#     npy_files = glob.glob(os.path.join(folder, '*.npy'))
+#     for npy_file in npy_files:
+#         os.remove(npy_file)
+
 #%% PLOTTING INDIVIDUAL POSTERIORS NO BETA 
-total_n = 100
+total_n = 402
 all_posteriors_nobeta = {}
 for event_n in range(total_n):
     subfolder = 'event'+'{:03}'.format(event_n)
@@ -430,29 +474,35 @@ fig.write_html(html_file)
 import webbrowser
 webbrowser.open('file://' + os.path.realpath(html_file))
 
+#%% PGW
+# PGW_values_dict = {}
+# for H0 in H0_values:
+#     PGW_values = np.load(f'/Users/xq/Desktop/dark_sirens/betaMC/PGW_values_H0={H0}.npy')
+#     plt.plot(np.linspace(0.01,1,25),PGW_values,label=f'H0={H0}')
+# plt.legend()
 
 #%% BETAS
 ## RAW BETAS
-# betas = np.load('../betaMC/betas_0921.npy')
+betas = np.load('../betaMC/betas_0923_pcat.npy')
 
 #### CUBIC FITTING
-betas_values = np.load('../betaMC/betas_0921.npy')
-coefficients = np.polyfit(H0_values, betas_values, 3)
-beta_cubic_function = np.poly1d(coefficients)
-betas = beta_cubic_function(H0_values)
+# betas_values = np.load('../betaMC/betas_0923_pcat.npy')
+# coefficients = np.polyfit(H0_values, betas_values, 3)
+# beta_cubic_function = np.poly1d(coefficients)
+# betas = beta_cubic_function(H0_values)
 
 ##### PURE CUBIC
 # betas = H0_values**3
 
-plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
-plt.plot(H0_values,betas_values,label='original')
-plt.legend()
-plt.title("Betas against H0")
+# plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
+# plt.plot(H0_values,betas_values,label='original')
+# plt.legend()
+# plt.title("Betas against H0")
 
 #%% ADDING IN BETA
 all_posteriors = {}
 for hostz, posterior_nobeta in all_posteriors_nobeta.items():
-    posterior = posterior_nobeta / betas
+    posterior = posterior_nobeta / (betas)
     posterior = normalize(H0_values, posterior)
     all_posteriors[hostz] = posterior
 
@@ -473,15 +523,47 @@ fig.update_layout(
     legend_title='hostz'
 )
 
+fig.update_xaxes(range=[30,140])
+fig.update_yaxes(range=[0,0.025])
 html_file = 'posteriors_with_betas.html'
 fig.write_html(html_file)
 import webbrowser
 webbrowser.open('file://' + os.path.realpath(html_file))
 
+#%% LOG POSTERIOR
+posterior_distributions = []
+for hostz,posterior in all_posteriors.items():
+    posterior_distributions.append(posterior)
+posterior_distributions = np.array(posterior_distributions)
+
+log_posteriors = np.log(posterior_distributions)
+combined_log_posterior = np.sum(log_posteriors,axis=0)
+
+H0_values_from40 = H0_values[4:]
+combined_log_posterior_from40 = combined_log_posterior[4:]
+scaleup_from40 = -min(combined_log_posterior_from40)
+combined_log_posterior_from40_scaled = combined_log_posterior_from40+scaleup_from40
+combined_posterior_from40 = np.exp(combined_log_posterior_from40_scaled)
+plt.plot(H0_values_from40,combined_posterior_from40)
+
+scaleup = -min(combined_log_posterior)
+combined_log_posterior += scaleup
+combined_posterior = np.exp(combined_log_posterior)
+
+plt.plot(H0_values,combined_posterior)
+plt.plot([true_H0,true_H0],[0,max(combined_posterior)],
+         linestyle='--',label='true'+r'$H_0$'+f'={true_H0}')
+plt.title('combined posterior')
+plt.xlim(30,140)
+plt.ylim(0,1.2*max(combined_posterior[3:]))
+plt.show()
 #%% PLOTTING COMBINED POSTERIOR
 combined_posterior = np.ones(len(H0_values))
 i=0
 for hostz, posterior in all_posteriors.items():
+    if i<300 or i>320:
+        i+=1
+        continue
     combined_posterior *= 100*posterior
     i+=1
 plt.plot(H0_values,combined_posterior)
@@ -499,4 +581,45 @@ for _, hostz in all_posteriors_nobeta.keys():
 events_z = np.array(events_z)
 plt.hist(events_z,bins=np.linspace(0,1,10))
 plt.show()
+
+plt.plot(events_z,np.ones(len(events_z)),'.')
+plt.show()
+# %%
+# GENERATING NON DETECTED EVENT
+#Draw parameters
+# params_n = {}
+# host_truez = 0.7
+# host_dL = dL(host_truez,true_H0)
+# host_ra = euclid['RA'][host_index]
+# host_dec = euclid['Dec'][host_index]
+# m1 = draw_from_mass_distr_m1()
+# m2 = draw_from_mass_distr_m2(m1)
+# t_start = draw_from_time()
+# t_end = t_start + 7200
+# print(n_events_sofar, 'params drawn')
+
+# folder_name = 'not_det'
+# os.makedirs(folder_name, exist_ok=True)
+# script_content = sh_template.format(
+#         RA=host_ra,
+#         Dec=host_dec,
+#         min_dL=host_dL-0.01,
+#         max_dL=host_dL+0.01,
+#         m1=m1,
+#         m2=m2,
+#         t_start=t_start,
+#         t_end=t_end)
+
+# file_path = os.path.join(folder_name, "gen.sh")
+# with open(file_path, "w") as file:
+#     file.write(script_content)
+# os.chmod(file_path, 0o755)
+# print(n_events_sofar, '.sh created')
+
+# #Execute Bayestar
+# os.chdir(folder_name)
+# sh_files = [f for f in os.listdir() if f.endswith('.sh')]
+# with subprocess.Popen(['bash', sh_files[0]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+#         process.communicate()  # Ensure the process completes
+
 # %%

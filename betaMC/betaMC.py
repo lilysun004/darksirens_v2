@@ -138,10 +138,7 @@ def confidence_interval(x,y,ci): # assumes x is equally spaced array!
 
 
 #%% DEFINING RANGE OF Z AND PGW DICTIONARY
-z_values = np.linspace(0.01,1,25)
-PGW_dict = {}
-# key: H0_value
-# value: array of P_GW against z_value
+z_values = np.linspace(0.01,1.5,30)
 
 #%% DEFINING COMPUTE PGW FUNCTION
 def compute_PGW(z,H0,n_draws):
@@ -202,11 +199,11 @@ def compute_PGW(z,H0,n_draws):
     return n_detected / n_draws
 
 #%% GENERATE EVENTS AND SKYMAPS
-n_draws = 20
-for H0 in H0_values[-1:]:
+n_draws = 100
+for H0 in H0_values:
     PGW_values = []
     for z in z_values:
-        if len(PGW_values) > 2 and PGW_values[-1] == 0 and PGW_values[-2] == 0:
+        if len(PGW_values) > 2 and PGW_values[-1] == 0 and PGW_values[-2] == 0 and PGW_values[-3] == 0:
             print(f'H0={H0},z={z}, broke!')
             break
         PGW_each_z = compute_PGW(z,H0,n_draws)
@@ -219,19 +216,16 @@ for H0 in H0_values[-1:]:
     plt.title(f'PGW against z for H0={H0}')
     plt.show()
 
-# with open("PGW_dict.json", "w") as file:
-#     json.dump(PGW_dict, file)
-
 #%% COMBINING DIFFERENT RUNS
 for H0 in H0_values:
-    ndraws20 = np.load(f'ndraws=20/PGW_values_H0={H0}.npy')
-    ndraws30 = np.load(f'ndraws=30/PGW_values_H0={H0}.npy')
+    ndraws20 = np.load(f'cut_cat/ndraws=20/PGW_values_H0={H0}.npy')
+    ndraws30 = np.load(f'cut_cat/ndraws=30/PGW_values_H0={H0}.npy')
     PGW_values = 0.4*ndraws20 + 0.6*ndraws30
     np.save(f'PGW_values_H0={H0}.npy',PGW_values)
 
 #%% PLOTTING
 for H0 in H0_values:
-    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'cut_cat/PGW_values_H0={H0}.npy')
     plt.plot(z_values,PGW_values,label=H0)
 
 plt.legend()
@@ -239,15 +233,11 @@ plt.legend()
 #%% READING INTO DICTIONARY
 PGW_values_dict = {}
 for H0 in H0_values:
-    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'cut_cat/PGW_values_H0={H0}.npy')
     PGW_values_dict[H0] = PGW_values
 
 #%%
-euclid = pd.read_parquet('../subeuclid_fullsky.parquet')
-euclid_catalog = euclid.sample(frac=0.05)
-# euclid_catalog = euclid_catalog[(euclid_catalog['ztrue']<1)]
-euclid_catalog.reset_index(inplace=True,drop=True)
-print(euclid_catalog)
+euclid_catalog = pd.read_parquet('../subeuclid_fullsky_sub.parquet')
 truez = np.array(euclid_catalog['ztrue'])
 zmeans = np.array(euclid_catalog['zmean'])
 zsigmas = np.array(euclid_catalog['zsigma'])
@@ -279,7 +269,7 @@ for H0 in H0_values:
 
 plt.plot(H0_values,betas)
 plt.title('beta')
-np.save('betas_0922.npy',betas)
+np.save('betas_0923.npy',betas)
 
 #%% CALCULATING P_CAT USING GAUSSIAN
 p_reds = []
@@ -303,5 +293,5 @@ for H0, PGW in PGW_values_dict.items():
     beta = np.trapz(PGW*pcat_interpolated,z_values)
     betas.append(beta)
 plt.plot(H0_values,betas)
-np.save('betas_0921.npy',betas)
+np.save('betas_0923_pcat.npy',betas)
 # %%

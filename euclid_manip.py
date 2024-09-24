@@ -32,6 +32,6 @@ og_8times_decs = np.concatenate([og_4times_decs,mirror_decs])
 og_8times['Dec'] = og_8times_decs
 
 # %%
-og_8times.to_parquet('subeuclid_all_8times.parquet')
+og_8times.to_parquet('subeuclid_fullsky.parquet')
 # %%
 og_8times
