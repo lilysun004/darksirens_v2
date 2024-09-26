@@ -225,7 +225,7 @@ for H0 in H0_values:
 
 #%% PLOTTING
 for H0 in H0_values:
-    PGW_values = np.load(f'cut_cat/PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
     plt.plot(z_values,PGW_values,label=H0)
 
 plt.legend()
@@ -233,7 +233,7 @@ plt.legend()
 #%% READING INTO DICTIONARY
 PGW_values_dict = {}
 for H0 in H0_values:
-    PGW_values = np.load(f'cut_cat/PGW_values_H0={H0}.npy')
+    PGW_values = np.load(f'PGW_values_H0={H0}.npy')
     PGW_values_dict[H0] = PGW_values
 
 #%%
@@ -293,5 +293,5 @@ for H0, PGW in PGW_values_dict.items():
     beta = np.trapz(PGW*pcat_interpolated,z_values)
     betas.append(beta)
 plt.plot(H0_values,betas)
-np.save('betas_0923_pcat.npy',betas)
+np.save('betas_0925.npy',betas)
 # %%

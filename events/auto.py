@@ -18,7 +18,7 @@ Omega_lamb = 1- Omega_m
 c = 299792.458
 
 H0_prior_min, H0_prior_max = 20, 140
-H0_values = np.linspace(H0_prior_min,H0_prior_max,25)
+H0_values = np.linspace(H0_prior_min,H0_prior_max,100)
 
 # Define the template for the .sh file
 sh_template = """lalapps_inspinj \\
@@ -146,7 +146,7 @@ original_directory = os.getcwd()
 os.chdir(original_directory)
 
 params_all = {}
-n_events_sofar = 50
+n_events_sofar = 33
 n_events_target = 500
 while n_events_sofar < n_events_target:
     #Draw parameters
@@ -215,6 +215,10 @@ while n_events_sofar < n_events_target:
     os.chdir(original_directory)
 
 print('DONE!!!')
+
+problems_file = 'problems.txt'
+with open(problems_file,'w'):
+    pass
 
 #%%
 all_posteriors_nobeta = {}
@@ -359,6 +363,14 @@ def calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog):
         posterior.append(each_posterior_nobeta)
         print(f'H0 = {H0} done',end='\r')
     return np.array(posterior)
+
+def write_problems(event_n,message,problems_file):
+    message_str = 'event'+'{:03}'.format(event_n) + message
+    with open(problems_file, 'r') as file:
+        lines = file.readlines()
+    if message_str not in lines:
+        with open(problems_file, 'a') as file:
+            file.write(message_str)
     
 # %%
 z_values = np.linspace(0, 5, 1000)
@@ -397,8 +409,9 @@ for subfolder in subfolders:
 
 #%%
 plot=False
-n_events_sofar_post = 406
-n_events_end_post = 429
+n_events_sofar_post = 128
+n_events_end_post = 456
+catalog_empties = []
 
 for event_n in range(n_events_sofar_post,n_events_end_post):
     subfolder = 'event'+'{:03}'.format(event_n)
@@ -407,8 +420,8 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     filename = subfolder + '/' + fits_files[0]
     print('processing',filename)
     allz_galaxy_catalog = get_galaxy_catalog(euclid,filename) #allz_
-    if len(galaxy_catalog) == 0:
-        print(subfolder, 'localised where catalog empty')
+    if len(allz_galaxy_catalog) < 3:
+        write_problems(event_n, 'Catalog Empty', problems_file)
         continue
     z_lower_bound, z_upper_bound = find_catalog_zlimits(allz_galaxy_catalog)
     galaxy_catalog = cut_catalog_z(allz_galaxy_catalog,z_lower_bound,z_upper_bound)
@@ -428,6 +441,9 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     zsigmas = galaxy_catalog['zsigma']
     p_reds = calculate_preds(zmeans, zsigmas, p_bg)
     posterior_nobeta = calculate_posterior_nobeta(H0_values, p_reds, galaxy_catalog)
+    if np.all(posterior_nobeta == 0):
+        write_problems(event_n, 'Posterior 0', problems_file)
+        continue
     all_posteriors_nobeta[(event_n,true_z)] = posterior_nobeta
     if plot is True:
         plt.plot(H0_values,posterior_nobeta)
@@ -435,6 +451,7 @@ for event_n in range(n_events_sofar_post,n_events_end_post):
     np.save(subfolder+'/posterior_nobeta.npy',posterior_nobeta)
 
 print('POSTERIORS DONE')
+print('catalog empties:',catalog_empties)
 
 #%% DELETING ALL POSTERIORS NO BETA
 # import glob
@@ -444,7 +461,7 @@ print('POSTERIORS DONE')
 #         os.remove(npy_file)
 
 #%% PLOTTING INDIVIDUAL POSTERIORS NO BETA 
-total_n = 402
+total_n = 100
 all_posteriors_nobeta = {}
 for event_n in range(total_n):
     subfolder = 'event'+'{:03}'.format(event_n)
@@ -483,21 +500,23 @@ webbrowser.open('file://' + os.path.realpath(html_file))
 
 #%% BETAS
 ## RAW BETAS
-betas = np.load('../betaMC/betas_0923_pcat.npy')
+# betas = np.load('../betaMC/betas_0925.npy')
 
 #### CUBIC FITTING
-# betas_values = np.load('../betaMC/betas_0923_pcat.npy')
-# coefficients = np.polyfit(H0_values, betas_values, 3)
-# beta_cubic_function = np.poly1d(coefficients)
-# betas = beta_cubic_function(H0_values)
+H0_values_betas = np.linspace(H0_prior_min,H0_prior_max,25)
+betas_values = np.load('../betaMC/betas_0925.npy')
+betas_values_interp = np.interp(H0_values,H0_values_betas,betas_values)
+coefficients = np.polyfit(H0_values, betas_values_interp, 3)
+beta_cubic_function = np.poly1d(coefficients)
+betas = beta_cubic_function(H0_values)
 
 ##### PURE CUBIC
 # betas = H0_values**3
 
-# plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
-# plt.plot(H0_values,betas_values,label='original')
-# plt.legend()
-# plt.title("Betas against H0")
+plt.plot(H0_values,betas,label='smoothed (fitted cubic)')
+plt.plot(H0_values_betas,betas_values,label='original')
+plt.legend()
+plt.title("Betas against H0")
 
 #%% ADDING IN BETA
 all_posteriors = {}
@@ -559,13 +578,10 @@ plt.ylim(0,1.2*max(combined_posterior[3:]))
 plt.show()
 #%% PLOTTING COMBINED POSTERIOR
 combined_posterior = np.ones(len(H0_values))
-i=0
 for hostz, posterior in all_posteriors.items():
-    if i<300 or i>320:
-        i+=1
+    if hostz[0] == 81:
         continue
     combined_posterior *= 100*posterior
-    i+=1
 plt.plot(H0_values,combined_posterior)
 plt.plot([true_H0,true_H0],[0,max(combined_posterior)],
          linestyle='--',label='true'+r'$H_0$'+f'={true_H0}')
